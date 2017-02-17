@@ -6,6 +6,7 @@
 // TODO List:
 // ****************************************
 /*
+ * - Solenoid PWM
  * - Pick Angle adjustment
  * - CC toggling change to use value threshold instead
  * - Varying fretting strength as angle changes
@@ -22,7 +23,7 @@ bool dampEveryNote = false;                       // sets whether each note is d
 bool continuousPlaying = false;                   // sets whether the monochord keeps picking between Note ON and Note OFF messages (Continuous), or picks only once (default FALSE)
 
 const bool pickLimitSwitch = false;               // sets whether the pickwheel uses the limit switch to pick
-int pickSwitchPin = 22;
+int pickSwitchPin = 21;
 
 int sol1 = 49;
 int sol2 = 46;
@@ -44,11 +45,11 @@ const int fretPerpAngle = 95;                                         // angle a
 
 // array holds angle values for each fretting position of the 12 notes in an octave
 int fretOffset = 0;
-int fretPositions[12] = {69, 76, 83, 91, 100, 110, 119, 127, 134, 140, 146, 149};
+int fretPositions[12] = {59, 65, 72, 80, 86, 96, 105, 112, 118, 124, 129, 133};
 //int fretClampings[12] = {125, 125, 130, 130, 135, 135, 135, 135, 130, 130, 125, 125};
 
 // delays from 1 fret away to max 12 frets away - in milliseconds (ms)
-int frettingDelay[12] = {5,10,15,20,25,30,35,40,45,50,55,60};
+int frettingDelay[12] = {50,60,70,80,90,100,120,140,160,180,200,220};
 int currentFret = 0;                                                  // 0 - Open String
 
 // E Tuning - F3 F* G G* A A* B C4 C* D D* E4
@@ -59,10 +60,10 @@ const int midiMax = 0x40;
 const int midiOffset = -(midiMin+1);
 
 const int FretterServoPin = 47;
-const int fretterOn = 130;
-const int fretterTouching = 115;
+const int fretterOn = 120;
+const int fretterTouching = 110;
 //const int fretterClose = 112;                                       //not used anymore
-const int fretterOff = 105;
+const int fretterOff = 100;
 
 // Stepper Motor Pins
 const int StpRef = A15;
@@ -83,7 +84,7 @@ const int pickValue = -53;                                            // 200 ste
 const int maxAngleSteps = 2000;                                       // NOTE - Placeholder value, needs testing
 
 AccelStepper pickStepper(AccelStepper::DRIVER, StpSTP, StpDIR);       //(mode, STEP pin, DIR pin)
-AccelStepper angleStepper(AccelStepper::DRIVER, angleStpSTP, angleStpDIR); 
+//AccelStepper angleStepper(AccelStepper::DRIVER, angleStpSTP, angleStpDIR); 
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, midi1)
 
@@ -113,11 +114,11 @@ void setup() {
   pickStepper.setAcceleration(20000);
   //pickStepper.disableOutputs();
 
-  angleStepper.enableOutputs();
-  angleStepper.setCurrentPosition(0);
-  angleStepper.setMaxSpeed(1000);
-  angleStepper.setSpeed(1000);  
-  angleStepper.setAcceleration(20000);
+//  angleStepper.enableOutputs();
+//  angleStepper.setCurrentPosition(0);
+//  angleStepper.setMaxSpeed(1000);
+//  angleStepper.setSpeed(1000);  
+//  angleStepper.setAcceleration(20000);
 
   // MISC - Setup
   pinMode(pickSwitchPin, INPUT);                                      // set up pickwheel limit switch
@@ -139,7 +140,7 @@ void handleNoteOn(byte channel, byte pitch, byte velocity){
   else {                                                              // velocity = 0 counts as NOTE OFF
     if (dampEveryNote) dampString();
   }
-  clearInputBuffer();   //NOTE - Might not work
+  //clearInputBuffer();   //NOTE - Does not currently work
 }
 
 void handleNoteOff(byte channel, byte pitch, byte velocity){
@@ -159,24 +160,22 @@ void handleControlChange(byte channel, byte pitch, byte velocity){
 }
 
 void pickString() {
-  //angleStepper.runToNewPosition(angleStepper.currentPosition() + pickValue);    // BLOCKING
   if (pickLimitSwitch) {
-    pickStepper.moveTo(pickStepper.currentPosition() + 200);                      // start a full rotation
-    while(!pickSwitchPin) {                                                       // run pickwheel until pickLimitSwitch is activated - i.e. quarter of rotation is complete
+    pickStepper.moveTo(pickStepper.currentPosition() - 200);                      // start a full rotation
+    while(!digitalRead(pickSwitchPin)) {                                          // run pickwheel until pickLimitSwitch is activated - i.e. quarter of rotation is complete
       pickStepper.run();
     }
-    pickStepper.runToNewPosition(pickStepper.currentPosition() + 5);              // make sure we move past the limit switch
+    pickStepper.runToNewPosition(pickStepper.currentPosition() - 10);             // make sure we move past the limit switch
   }
   else {
     pickStepper.runToNewPosition(pickStepper.currentPosition() + pickValue);      // BLOCKING
   }
-  //pickStepper.moveTo(pickStepper.currentPosition() + pickValue);
 }
 
 void dampString() {
   dampOn();
-  //delay(100);
-  //dampOff();                                                                    // turn off when note has decayed
+  delay(100);
+  dampOff();                                                                    // turn off when note has decayed
 }
 
 void dampOn() {
@@ -198,22 +197,34 @@ void dampOff() {
 void moveFretter(byte pitch) {
   int fretNum = pitch + midiOffset;
   if (fretNum < 0 || fretNum >= 12) return;
-  pitchServo.write(fretPositions[fretNum] + fretOffset);
-  //NOTE - might need to slow movement to extreme angles to prevent overshoot
-  //NOTE - might need to change damping strength as angle changes
   int fretDiff = abs(fretNum - currentFret);
+  if (fretDiff >= 6) {
+    if (fretNum == 0){
+      Serial.println("Slowing min value");
+      pitchServo.write(fretPositions[fretNum+1] + fretOffset);
+      delay(100);
+    }
+    else if (fretNum == 11){
+      Serial.println("Slowing max value");
+      pitchServo.write(fretPositions[fretNum-1] + fretOffset);
+      delay(100);
+    }
+  }
+  pitchServo.write(fretPositions[fretNum] + fretOffset);
+  
   delay(frettingDelay[fretDiff]);                                                 // uses variable delay depending on the distance the fretter must travel
   fretOn();
   currentFret = fretNum;
 }
 
 void fretOn() {
-  dampOn();
+  //dampOn();
   fretterServo.write(fretterTouching);
   delay(10);
   fretterServo.write(fretterOn);
   delay(50);                                                                      //NOTE - Might need reducing
-  dampOff();
+  //dampOff();
+  dampString();
 }
 
 // Toggle damper ON/OFF
@@ -239,13 +250,14 @@ void togglePlayingMode() {
 void setPickAngle(byte value) {
   if (DEBUG) Serial.println("Changing Picking Angle");
   int newAnglePosition = maxAngleSteps / 127 * value;
-  angleStepper.runToNewPosition(newAnglePosition);
+//  angleStepper.runToNewPosition(newAnglePosition);
   if (DEBUG) Serial.println(newAnglePosition);
 }
 
 void clearInputBuffer() {
 //  while(Serial.available()){  //is there anything to read?
 //    char getData = Serial.read();  //if yes, read it
+//    if (DEBUG) Serial.println("PURGING STORED MIDI MESSAGE");
 //  }
   while(midi1.check()) {
     midi1.read();
@@ -256,18 +268,4 @@ void clearInputBuffer() {
 //------------ Main Loop ------------
 void loop() {
   midi1.read();
-  //pickStepper.run();
-//  Serial.println(digitalRead(22));
-  
-//  pickStepper.runToNewPosition(pickStepper.currentPosition() + pickValue);
-//  delay(1000);
-
-//  handleNoteOn(1,5,50);
-//  delay(1000);
-//  handleNoteOff(1,5,50);
-//  delay(2000);
-
-//  angleStepper.runToNewPosition(angleStepper.currentPosition() + pickValue);
-//  delay(1000);
-//  Serial.println(angleStepper.currentPosition());
 }
